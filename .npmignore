@@ -1,0 +1,9 @@
+src/
+test-scripts/
+tsconfig.json
+.gitignore
+.npmignore
+node_modules/
+*.log
+*.tsbuildinfo
+coverage/
