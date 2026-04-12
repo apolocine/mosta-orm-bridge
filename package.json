@@ -1,0 +1,73 @@
+{
+  "name": "@mostajs/orm-bridge",
+  "version": "0.1.0",
+  "description": "Runtime bridges for third-party ORMs (Prisma, Drizzle, TypeORM, Mongoose) — intercept their calls and redirect to @mostajs/orm for 13-database access without rewriting existing code",
+  "author": "Dr Hamid MADANI <drmdh@msn.com>",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./prisma": {
+      "types": "./dist/prisma/index.d.ts",
+      "import": "./dist/prisma/index.js"
+    }
+  },
+  "files": ["dist", "LICENSE", "README.md", "CHANGELOG.md"],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "npx tsx test-scripts/run-all.ts",
+    "test:prisma": "npx tsx test-scripts/test-prisma-bridge.ts",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "keywords": [
+    "mostajs",
+    "orm",
+    "bridge",
+    "prisma",
+    "drizzle",
+    "typeorm",
+    "mongoose",
+    "interception",
+    "runtime",
+    "proxy",
+    "multi-database",
+    "mongodb",
+    "oracle",
+    "db2"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/apolocine/mosta-orm-bridge.git"
+  },
+  "bugs": {
+    "url": "https://github.com/apolocine/mosta-orm-bridge/issues"
+  },
+  "homepage": "https://github.com/apolocine/mosta-orm-bridge#readme",
+  "peerDependencies": {
+    "@mostajs/orm": "^1.9.0",
+    "@prisma/client": ">=5.4.0"
+  },
+  "peerDependenciesMeta": {
+    "@prisma/client": { "optional": true }
+  },
+  "devDependencies": {
+    "@mostajs/orm": "^1.9.0",
+    "@prisma/client": "^5.20.0",
+    "@types/node": "^20.0.0",
+    "prisma": "^5.20.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.3.0",
+    "better-sqlite3": "^11.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
