@@ -41,6 +41,8 @@ import { readFileSync } from 'fs';
 import { resolve as pathResolve } from 'path';
 import type { IDialect, EntitySchema, DialectType, SchemaStrategy } from '@mostajs/orm';
 import { dispatchPrismaOp } from './dispatcher.js';
+import { applyInclude as applyAdvancedInclude } from './include.js';
+import type { EntityResolver } from './types.js';
 
 export interface CreatePrismaLikeDbOptions {
   /** EntitySchema[] to use. If omitted, read from `entitiesPath`. */
@@ -112,6 +114,8 @@ export function createPrismaLikeDb<T = any>(opts: CreatePrismaLikeDbOptions = {}
   const entityByKey = new Map<string, EntitySchema>(
     entities.map(e => [caseInsensitive ? e.name.toLowerCase() : e.name, e])
   );
+  const resolveEntity: EntityResolver = (name: string) =>
+    entityByKey.get(caseInsensitive ? name.toLowerCase() : name);
 
   // --- Lazy-init dialect (singleton across HMR in dev) ---
   const globalScope = globalThis as unknown as { __mostaPrismaLikeDialect?: IDialect };
@@ -124,7 +128,7 @@ export function createPrismaLikeDb<T = any>(opts: CreatePrismaLikeDbOptions = {}
     return d;
   }
 
-  // --- include post-processing (many-to-one only) ---
+  // --- include post-processing — delegates to ./include.ts ---
   async function applyInclude(
     row: any,
     entity: EntitySchema,
@@ -132,18 +136,7 @@ export function createPrismaLikeDb<T = any>(opts: CreatePrismaLikeDbOptions = {}
   ): Promise<any> {
     if (!row || !include) return row;
     const d = await getD();
-    for (const [relName, want] of Object.entries(include)) {
-      if (!want) continue;
-      const rel = entity.relations?.[relName];
-      if (!rel) continue;
-      const target = entityByKey.get(caseInsensitive ? rel.target.toLowerCase() : rel.target);
-      if (!target) continue;
-      const fk = (rel as any).joinColumn ?? relName + 'Id';
-      const fkVal = row[fk] ?? row[relName + 'Id'];
-      if (fkVal === undefined || fkVal === null) { row[relName] = null; continue; }
-      row[relName] = await d.findOne(target, { id: fkVal });
-    }
-    return row;
+    return applyAdvancedInclude(d, row, entity, include, resolveEntity);
   }
 
   // --- Per-model proxy ---
@@ -162,7 +155,8 @@ export function createPrismaLikeDb<T = any>(opts: CreatePrismaLikeDbOptions = {}
               { dialect, schema: entity } as any,
               entity.name,
               op as any,
-              cleanArgs
+              cleanArgs,
+              resolveEntity,
             );
             opts.onIntercept?.({ model: entity.name, operation: op, duration: Date.now() - started });
             if (!resolveInc || !include) return result;
@@ -190,9 +184,27 @@ export function createPrismaLikeDb<T = any>(opts: CreatePrismaLikeDbOptions = {}
         if (d) { await d.disconnect(); globalScope.__mostaPrismaLikeDialect = undefined; }
       };
       if (prop === '$transaction') {
-        return async (arg: any) => {
-          if (typeof arg === 'function') return arg(this);
-          if (Array.isArray(arg)) { const out: any[] = []; for (const p of arg) out.push(await p); return out; }
+        return async (arg: any, opts?: any) => {
+          const d = await getD();
+          const anyD = d as unknown as { $transaction?: Function };
+          // Prisma array form:  db.$transaction([ p1, p2, … ])  — run the
+          // already-resolving promises to completion, return the results.
+          // (Prisma runs these sequentially ; real ACID grouping would
+          // require re-routing each promise through the tx client — not
+          // yet wired.)
+          if (Array.isArray(arg)) {
+            const out: any[] = [];
+            for (const p of arg) out.push(await p);
+            return out;
+          }
+          // Prisma callback form:  db.$transaction(async tx => { … })
+          // Route to dialect.$transaction if available — real ACID.
+          if (typeof arg === 'function') {
+            if (typeof anyD.$transaction === 'function') {
+              return anyD.$transaction(() => arg(this), opts);
+            }
+            return arg(this);
+          }
           return arg;
         };
       }

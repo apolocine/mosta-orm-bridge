@@ -4,10 +4,17 @@
 
 import type { IDialect, EntitySchema, FilterQuery } from '@mostajs/orm';
 import type { ModelBinding } from '../core/types.js';
-import type { PrismaOperation } from './types.js';
+import type { PrismaOperation, EntityResolver } from './types.js';
 import { mapPrismaWhere } from './mappers/where.js';
 import { mapPrismaOrderBy } from './mappers/orderby.js';
 import { modelToCollection } from '../utils/case-conversion.js';
+import {
+  extractNested,
+  resolveParentFks,
+  executeNested,
+  findUniqueMatch,
+} from './nested.js';
+import { runInTransaction } from './transaction.js';
 
 /**
  * Execute a Prisma operation on a mosta-orm dialect.
@@ -21,7 +28,8 @@ export async function dispatchPrismaOp(
   binding: ModelBinding,
   modelName: string,
   operation: PrismaOperation,
-  args: Record<string, unknown> | undefined
+  args: Record<string, unknown> | undefined,
+  resolveEntity?: EntityResolver,
 ): Promise<unknown> {
   const schema = resolveSchema(binding, modelName);
   const a = args ?? {};
@@ -51,38 +59,79 @@ export async function dispatchPrismaOp(
       return dialect.count(schema, where);
 
     case 'create':
-      return dialect.create(schema, (a.data ?? {}) as Record<string, unknown>);
+      return runInTransaction(dialect, async (tx) => {
+        const data = (a.data ?? {}) as Record<string, unknown>;
+        if (!resolveEntity) return tx.create(schema, data);
+        const { scalarData, nested } = extractNested(schema, data, resolveEntity);
+        const fkPatch = await resolveParentFks(tx, schema, nested);
+        const row = await tx.create(schema, { ...scalarData, ...fkPatch });
+        await executeNested(tx, schema, (row as any).id ?? (row as any)._id, nested, resolveEntity);
+        return row;
+      });
 
     case 'createMany': {
       const rows = Array.isArray(a.data) ? a.data : [a.data];
-      let count = 0;
-      for (const row of rows) {
-        await dialect.create(schema, row as Record<string, unknown>);
-        count++;
-      }
-      return { count };
+      return runInTransaction(dialect, async (tx) => {
+        let count = 0;
+        for (const row of rows) {
+          if (!resolveEntity) {
+            await tx.create(schema, row as Record<string, unknown>);
+          } else {
+            const { scalarData, nested } = extractNested(schema, row as Record<string, unknown>, resolveEntity);
+            const fkPatch = await resolveParentFks(tx, schema, nested);
+            const created = await tx.create(schema, { ...scalarData, ...fkPatch });
+            await executeNested(tx, schema, (created as any).id ?? (created as any)._id, nested, resolveEntity);
+          }
+          count++;
+        }
+        return { count };
+      });
     }
 
-    case 'update': {
-      const existing = await dialect.findOne<{ id?: string; _id?: string }>(schema, where);
-      if (!existing) throw new Error(`${modelName} not found for update`);
-      const id = String(existing.id ?? existing._id ?? '');
-      return dialect.update(schema, id, a.data as Record<string, unknown>);
-    }
+    case 'update':
+      return runInTransaction(dialect, async (tx) => {
+        const existing = await tx.findOne<{ id?: string; _id?: string }>(schema, where);
+        if (!existing) throw new Error(`${modelName} not found for update`);
+        const id = String(existing.id ?? existing._id ?? '');
+        const data = a.data as Record<string, unknown>;
+        if (!resolveEntity) return tx.update(schema, id, data);
+        const { scalarData, nested } = extractNested(schema, data, resolveEntity);
+        const fkPatch = await resolveParentFks(tx, schema, nested);
+        const updated = Object.keys(scalarData).length + Object.keys(fkPatch).length
+          ? await tx.update(schema, id, { ...scalarData, ...fkPatch })
+          : existing;
+        await executeNested(tx, schema, id, nested, resolveEntity);
+        return updated;
+      });
 
     case 'updateMany': {
       const count = await dialect.updateMany(schema, where, a.data as Record<string, unknown>);
       return { count };
     }
 
-    case 'upsert': {
-      const existing = await dialect.findOne<{ id?: string; _id?: string }>(schema, where);
-      if (existing) {
-        const id = String(existing.id ?? existing._id ?? '');
-        return dialect.update(schema, id, a.update as Record<string, unknown>);
-      }
-      return dialect.create(schema, a.create as Record<string, unknown>);
-    }
+    case 'upsert':
+      return runInTransaction(dialect, async (tx) => {
+        const existing = await tx.findOne<{ id?: string; _id?: string }>(schema, where);
+        if (existing) {
+          const id = String(existing.id ?? existing._id ?? '');
+          const data = a.update as Record<string, unknown>;
+          if (!resolveEntity) return tx.update(schema, id, data);
+          const { scalarData, nested } = extractNested(schema, data, resolveEntity);
+          const fkPatch = await resolveParentFks(tx, schema, nested);
+          const updated = Object.keys(scalarData).length + Object.keys(fkPatch).length
+            ? await tx.update(schema, id, { ...scalarData, ...fkPatch })
+            : existing;
+          await executeNested(tx, schema, id, nested, resolveEntity);
+          return updated;
+        }
+        const data = a.create as Record<string, unknown>;
+        if (!resolveEntity) return tx.create(schema, data);
+        const { scalarData, nested } = extractNested(schema, data, resolveEntity);
+        const fkPatch = await resolveParentFks(tx, schema, nested);
+        const row = await tx.create(schema, { ...scalarData, ...fkPatch });
+        await executeNested(tx, schema, (row as any).id ?? (row as any)._id, nested, resolveEntity);
+        return row;
+      });
 
     case 'delete': {
       const existing = await dialect.findOne<{ id?: string; _id?: string }>(schema, where);
