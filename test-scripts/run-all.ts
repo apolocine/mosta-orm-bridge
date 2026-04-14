@@ -5,6 +5,7 @@ import { execSync } from 'child_process';
 
 const tests = [
   'test-scripts/test-prisma-bridge.ts',
+  'test-scripts/test-prisma-client.ts',
   // 'test-scripts/test-drizzle-bridge.ts',  // TODO
   // 'test-scripts/test-typeorm-bridge.ts',  // TODO
 ];

@@ -2,6 +2,64 @@
 
 All notable changes to `@mostajs/orm-bridge` will be documented in this file.
 
+## [0.2.1] — 2026-04-14
+
+### Added
+
+- **Prisma `aggregate` and `groupBy` support** in the dispatcher. Maps
+  `_count`, `_sum`, `_avg`, `_min`, `_max` accumulators to @mostajs/orm's
+  `AggregateStage[]` pipeline, then reshapes the result back to Prisma's
+  nested output shape. Works with `where`, `orderBy`, `take` on `groupBy`.
+- **test-scripts/test-prisma-client.ts** — full-surface suite covering
+  CRUD + aggregate + groupBy + `$transaction` on real SQLite. 16/16 passing.
+
+### Known limitation
+
+- `groupBy` accepts a single field in `by`. Multi-field groupBy throws with
+  an explicit error pointing at the @mostajs/orm `AggregateGroupStage._by`
+  limitation — will be lifted once upstream accepts an array.
+- Per-field `_count: { field: true }` currently counts total rows (not
+  non-null per field). A future release will issue multiple sub-queries or
+  rely on upstream `$sum` of `$cond` once available.
+
+## [0.2.0] — 2026-04-14
+
+### Added
+
+- **`createPrismaLikeDb()`** (`@mostajs/orm-bridge/prisma-client`) : one-call
+  factory that returns a Prisma-compatible `db` proxy backed by @mostajs/orm.
+  Replaces hand-written per-project `db.ts` adapters. Standardises the
+  Prisma → mosta-orm migration :
+
+  ```ts
+  // src/lib/db.ts — now 2 lines
+  import 'server-only';
+  import { createPrismaLikeDb } from '@mostajs/orm-bridge/prisma-client';
+  export const db = createPrismaLikeDb();
+  ```
+
+  The factory :
+  - auto-loads EntitySchema[] from `.mostajs/generated/entities.json`
+    (configurable via `entitiesPath` or `entities`)
+  - reads `DB_DIALECT`, `SGBD_URI`, `DB_SCHEMA_STRATEGY` from env
+  - supports case-insensitive access (`db.User` === `db.user`)
+  - post-processes `include: { <relation>: true }` for many-to-one
+  - exposes root client methods `$connect`, `$disconnect`, `$transaction`
+    (sequential pass-through)
+  - lazy-imports `@mostajs/orm` to stay friendly with Next.js bundlers
+  - emits optional `onIntercept` events for telemetry
+
+### Changed
+
+- **Peer dep bump** : `@mostajs/orm` `^1.9.0` → `^1.9.3` (lazy dialect loader
+  required for Next.js client-bundle compatibility).
+
+### Validated
+
+FitZoneGym migration from Prisma+MongoDB to @mostajs/orm+SQLite now requires
+modifying only `src/lib/db.ts` (2 lines) — the 67 other files importing Prisma
+compile and run unchanged.
+
 ## [0.1.0] — 2026-04-12
 
 ### Added
