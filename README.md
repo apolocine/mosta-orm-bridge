@@ -7,6 +7,12 @@
 [![npm version](https://img.shields.io/npm/v/@mostajs/orm-bridge.svg)](https://www.npmjs.com/package/@mostajs/orm-bridge)
 [![License: AGPL-3.0-or-later](https://img.shields.io/badge/License-AGPL%203.0-blue.svg)](LICENSE)
 
+## Watch the 3-line migration end-to-end (5 steps, ~2 min)
+
+[![asciicast](https://asciinema.org/a/vwZD8DvX0xVfwvLS.svg)](https://asciinema.org/a/vwZD8DvX0xVfwvLS)
+
+Live recording of a fresh Next.js + Prisma project being migrated to the bridge — `install → convert → replace db.ts → start → login`. Click to play in your browser.
+
 ## The 3-line migration
 
 Replace your Prisma `db.ts` / `prisma.ts` with :
