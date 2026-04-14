@@ -78,9 +78,12 @@ export const db = createPrismaLikeDb({
 | `aggregate` (`_count`, `_sum`, `_avg`, `_min`, `_max` + filter) | ✅ v0.2.1 |
 | `groupBy` (single `by` field, `_count`, `_sum`, `_avg`, `_min`, `_max`, `orderBy`, `take`) | ✅ v0.2.1 |
 | `include: { <relation>: true }` — many-to-one post-fetch | ✅ |
-| `$connect`, `$disconnect`, `$transaction` (sequential pass-through) | ✅ |
-| Nested writes (`create: { profile: { create: {…} } }`) | 🚧 v0.3.0 |
-| Real ACID `$transaction` (BEGIN / COMMIT / ROLLBACK) | 🚧 v0.3.0 |
+| `$connect`, `$disconnect` | ✅ |
+| `$transaction` array (sequential) | ✅ |
+| `$transaction` callback — real ACID (BEGIN / COMMIT / ROLLBACK on SQL) | ✅ v0.3.0 |
+| Nested writes (`create`, `connect`, `createOrConnect`, `set`, `disconnect`, `update`, `delete`, `upsert`) | ✅ v0.3.0 |
+| `connect: { where: { id } }` **and** `connect: { where: { <anyUniqueKey> } }` (single + composite) | ✅ v0.3.0 |
+| `include: { <relation>: { where, orderBy, take, skip, select, include } }` (1:1, N:1, 1:N, N:N + nested) | ✅ v0.3.0 |
 | Multi-field `groupBy` | 🚧 (requires upstream `@mostajs/orm` change) |
 
 ## Supported Prisma `where` operators
@@ -95,6 +98,84 @@ export const db = createPrismaLikeDb({
 | `mode: 'insensitive'` | `$regexFlags: 'i'` |
 | `AND`, `OR` | `$and`, `$or` |
 | `NOT` | best-effort condition inversion |
+
+## Nested writes (v0.3.0)
+
+Prisma's nested writes are supported on relations at any depth. The connector resolves `connect` by primary id **or by any declared unique key** — including composite ones — so your existing Prisma schema keeps working without changes.
+
+```ts
+// 1:N — create the parent and its children in one call
+await db.User.create({
+  data: {
+    email: 'ada@lovelace.io',
+    posts: {
+      create: [
+        { title: 'Note engine' },
+        { title: 'Analytical engine' },
+      ],
+    },
+  },
+})
+
+// connect by id OR by any unique field / composite unique
+await db.Post.create({
+  data: {
+    title: 'Shared draft',
+    author:  { connect: { id: 42 } },
+    reviewer:{ connect: { email: 'byron@poet.uk' } },           // single unique
+    topic:   { connect: { tenantId_slug: { tenantId: 't1', slug: 'ada' } } }, // composite
+  },
+})
+
+// createOrConnect — upsert-like for relations
+await db.Order.create({
+  data: {
+    total: 199,
+    customer: {
+      connectOrCreate: {
+        where:  { email: 'guest@x.io' },
+        create: { email: 'guest@x.io', name: 'Guest' },
+      },
+    },
+  },
+})
+```
+
+**Atomicity** — every nested write is executed inside an implicit `$transaction` on the underlying `@mostajs/orm` dialect. If any child operation fails, the parent and every already-inserted sibling are rolled back (SQL dialects). See [`@mostajs/orm` → Transactions](https://github.com/apolocine/mosta-orm#transactions) for isolation semantics and MongoDB specifics.
+
+## Advanced include (v0.3.0)
+
+`include` accepts the full Prisma filter surface on relations : `where`, `orderBy`, `take`, `skip`, `select`, and nested `include`.
+
+```ts
+await db.User.findMany({
+  where: { status: 'active' },
+  include: {
+    posts: {
+      where:   { publishedAt: { not: null } },
+      orderBy: { publishedAt: 'desc' },
+      take:    5,
+      select:  { id: true, title: true, publishedAt: true },
+    },
+    profile: true,
+  },
+})
+
+// nested include — 2 levels deep
+await db.Org.findUnique({
+  where:   { slug: 'acme' },
+  include: {
+    members: {
+      orderBy: { joinedAt: 'asc' },
+      include: {
+        user: { select: { email: true, name: true } },
+      },
+    },
+  },
+})
+```
+
+Filters and ordering run on the same dialect as the outer query — no N+1, no post-fetch sort.
 
 ## Two ways to use the bridge
 

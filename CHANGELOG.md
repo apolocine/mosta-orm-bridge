@@ -2,6 +2,52 @@
 
 All notable changes to `@mostajs/orm-bridge` will be documented in this file.
 
+## [0.3.0] — 2026-04-14
+
+### Added — full Prisma parity on nested ops, real ACID, advanced include
+
+- **Nested writes** on every relation type (1:1, N:1, 1:N, N:N via `through`) :
+  `create`, `createMany`, `connect`, `connectOrCreate`, `set`, `disconnect`,
+  `update`, `updateMany`, `delete`, `deleteMany`, `upsert`.
+- **`connect: { where: { ... } }`** accepts **any** unique key, not just
+  `id`. Single-field unique *and* composite `@@unique` indexes are both
+  resolved automatically via `findUniqueMatch`.
+- **Real ACID `$transaction`** routed to `dialect.$transaction` (new in
+  `@mostajs/orm@1.10.0`). `db.$transaction(async tx => { ... })` rolls
+  back every write in the callback on throw. The array form still works
+  (`db.$transaction([p1, p2])`, sequential).
+- **Advanced `include`** : `include: { rel: { where, orderBy, take, skip, select, include } }`
+  works on all four relation types with nested recursion. Projection via
+  `select` keeps the `id` automatically so downstream joins resolve.
+- **Inverse 1:1 detection** : handles the case where the Prisma→EntitySchema
+  adapter emits an inverse 1:1 as `many-to-one` without `joinColumn`. The
+  bridge now infers the child-side FK via the target's back-reference.
+
+### Peer dependencies
+
+- `@mostajs/orm` peer bumped to `^1.10.0` (required for `$transaction`).
+
+### Tests
+
+- `test-nested-writes.ts`               — 9 / 9 ✓
+- `test-transaction-acid.ts`            — 8 / 8 ✓
+- `test-advanced-include.ts`            — 14 / 14 ✓
+- `test-edge-cases.ts`                  — 22 / 22 ✓
+- `test-fitzonegym-integration.ts`      — 15 / 15 ✓ (real 40-entity Prisma schema)
+- `test-prisma-client.ts`               — 16 / 16 ✓
+- `test-prisma-bridge.ts`               — 14 / 14 ✓
+
+Total: **7 test files, all green.**
+
+### Fixes discovered on real-world integration (FitZoneGym)
+
+- Many-to-many junction tables no longer use `dialect.create/find` (which
+  would inject a phantom `id` column). `INSERT` / `DELETE` / `SELECT` are
+  now issued as raw SQL via `executeRun` / `executeQuery`.
+- Nested creates recurse properly when a nested `{ create: [...] }`
+  payload itself contains `{ connect: { ... } }` on a many-to-one FK
+  (e.g. `Member.subscriptions.create → { plan: { connect }, createdBy: { connect } }`).
+
 ## [0.2.1] — 2026-04-14
 
 ### Added
