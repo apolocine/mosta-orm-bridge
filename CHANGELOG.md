@@ -2,6 +2,25 @@
 
 All notable changes to `@mostajs/orm-bridge` will be documented in this file.
 
+## [0.3.1] — 2026-04-15
+
+### Fixed — env vars resolved lazily, not at construction
+
+- **`createPrismaLikeDb()` now reads `process.env.DB_DIALECT` / `SGBD_URI` /
+  `DB_SCHEMA_STRATEGY` lazily (at first DB call), not at top-level.**
+  Pre-0.3.1, `db.ts` calling `createPrismaLikeDb()` at module top-level
+  could observe an empty `process.env` if Next.js / a bundler imported
+  `db.ts` before dotenv populated env vars — silently locking the bridge
+  to the `sqlite ./data.sqlite` fallback even when `.env` was correctly
+  set with Oracle / Postgres / Mongo creds. Symptom : login fails with
+  "user not found", queries hit an empty local SQLite, no error logged.
+- **Cached dialect is keyed on the connection signature**
+  (`dialect|uri|strategy`). If env changes between two requests
+  (HMR reload, restart with new `.env`), the previous dialect is closed
+  cleanly and a fresh one is opened against the new target.
+- **One-time warning** on `process.env.DB_DIALECT` missing — surfaces
+  silent fallbacks the first time they happen.
+
 ## [0.3.0] — 2026-04-14
 
 ### Added — full Prisma parity on nested ops, real ACID, advanced include
