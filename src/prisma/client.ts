@@ -85,14 +85,23 @@ export interface CreatePrismaLikeDbOptions {
  * and share across modules.
  */
 export function createPrismaLikeDb<T = any>(opts: CreatePrismaLikeDbOptions = {}): T {
-  const dialect: DialectType =
-    opts.dialect ?? (process.env.DB_DIALECT as DialectType) ?? 'sqlite';
-  const rawUri: string =
-    opts.uri ?? process.env.SGBD_URI ?? './data.sqlite';
-  const uri: string =
-    dialect === 'sqlite' ? rawUri.replace(/^sqlite:\/?\/?/, '') : rawUri;
-  const strategy: SchemaStrategy =
-    opts.schemaStrategy ?? (process.env.DB_SCHEMA_STRATEGY as SchemaStrategy) ?? 'update';
+  // Resolve dialect/uri/strategy LAZILY at first use, not at construction.
+  // Reason : in Next.js app-router & some bundlers, db.ts is imported very
+  // early — sometimes before .env files have populated process.env. Reading
+  // at top-level locked the bridge to the sqlite fallback regardless of
+  // .env content. Lazy resolution is also tried on every getD() call, so
+  // an .env reload (HMR, restart) is picked up on the next DB access.
+  const readEnv = () => {
+    const dialect: DialectType =
+      opts.dialect ?? (process.env.DB_DIALECT as DialectType) ?? 'sqlite';
+    const rawUri: string =
+      opts.uri ?? process.env.SGBD_URI ?? './data.sqlite';
+    const uri: string =
+      dialect === 'sqlite' ? rawUri.replace(/^sqlite:\/?\/?/, '') : rawUri;
+    const strategy: SchemaStrategy =
+      opts.schemaStrategy ?? (process.env.DB_SCHEMA_STRATEGY as SchemaStrategy) ?? 'update';
+    return { dialect, uri, strategy };
+  };
   const caseInsensitive = opts.caseInsensitive !== false;
   const resolveInc = opts.resolveInclude !== false;
 
@@ -118,13 +127,37 @@ export function createPrismaLikeDb<T = any>(opts: CreatePrismaLikeDbOptions = {}
     entityByKey.get(caseInsensitive ? name.toLowerCase() : name);
 
   // --- Lazy-init dialect (singleton across HMR in dev) ---
-  const globalScope = globalThis as unknown as { __mostaPrismaLikeDialect?: IDialect };
+  // The cached dialect is keyed on its connection signature so that an
+  // .env change between two calls (e.g. dev → restart with new SGBD_URI)
+  // is detected and a fresh dialect is opened against the new target.
+  const globalScope = globalThis as unknown as {
+    __mostaPrismaLikeDialect?: IDialect;
+    __mostaPrismaLikeKey?: string;
+  };
   async function getD(): Promise<IDialect> {
-    if (globalScope.__mostaPrismaLikeDialect) return globalScope.__mostaPrismaLikeDialect;
-    // Lazy import @mostajs/orm to mirror the bridge's no-static-edge pattern
+    const { dialect, uri, strategy } = readEnv();
+    const key = `${dialect}|${uri}|${strategy}`;
+    if (
+      globalScope.__mostaPrismaLikeDialect &&
+      globalScope.__mostaPrismaLikeKey === key
+    ) {
+      return globalScope.__mostaPrismaLikeDialect;
+    }
+    // Either first call or env changed — close the previous dialect (if any)
+    // and open a new one matching the current env.
+    if (globalScope.__mostaPrismaLikeDialect) {
+      try { await globalScope.__mostaPrismaLikeDialect.disconnect(); } catch { /* ignore */ }
+    }
+    if (!process.env.DB_DIALECT) {
+      console.warn(
+        `[@mostajs/orm-bridge] DB_DIALECT not set in env — falling back to "${dialect}" (${uri}). ` +
+        `Set DB_DIALECT and SGBD_URI in your .env to silence this warning.`
+      );
+    }
     const { getDialect } = await import('@mostajs/orm');
     const d = await getDialect({ dialect, uri, schemaStrategy: strategy } as any);
     globalScope.__mostaPrismaLikeDialect = d;
+    globalScope.__mostaPrismaLikeKey = key;
     return d;
   }
 
@@ -152,7 +185,7 @@ export function createPrismaLikeDb<T = any>(opts: CreatePrismaLikeDbOptions = {}
           try {
             const result = await dispatchPrismaOp(
               d,
-              { dialect, schema: entity } as any,
+              { dialect: (d as any).dialectType, schema: entity } as any,
               entity.name,
               op as any,
               cleanArgs,
