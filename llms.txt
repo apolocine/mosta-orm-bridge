@@ -1,0 +1,95 @@
+# @mostajs/orm-bridge — fiche LLM
+> Ponts runtime pour ORM tiers (Prisma…) — intercepte leurs appels et les redirige vers @mostajs/orm.
+
+- Version: 0.3.1 · Licence: AGPL-3.0-or-later · Auteur: Dr Hamid MADANI <drmdh@msn.com>
+- Chemin: mostajs/mosta-orm-bridge · Statut audit: complet (dist/)
+
+## RÔLE
+Permet à du code existant écrit pour un ORM tiers (Prisma en premier, Drizzle/TypeORM/Mongoose
+visés) de s'exécuter sur les 13 bases de @mostajs/orm sans réécriture. Deux modes :
+1) `mostaExtension` — un `$extends` de PrismaClient qui n'intercepte que les modèles mappés ;
+2) `createPrismaLikeDb` — un proxy `db` 100 % compatible Prisma client, drop-in total.
+La conversion des requêtes (where, orderBy, include, transactions, écritures imbriquées)
+est mappée vers l'API @mostajs/orm.
+
+## INSTALLATION
+npm i @mostajs/orm-bridge
+(peerDeps : @mostajs/orm ^1.10.0 ; @prisma/client >=5.4.0 optionnel selon mode)
+
+## EXPORTS
+- Connexions : getOrCreateDialect, disposeAllDialects
+- Conversion de casse : modelToCollection, pascalToCamel, toPascalCase
+- Prisma : mostaExtension, dispatchPrismaOp, mapPrismaWhere, mapPrismaOrderBy
+- Types : BridgeConfig, ModelBinding, InterceptEvent, PrismaBridgeConfig, PrismaOperation
+
+## EXPORTS PAR SOUS-CHEMIN
+- `@mostajs/orm-bridge/prisma` : mostaExtension, dispatchPrismaOp, mapPrismaWhere,
+  mapPrismaOrderBy, createPrismaLikeDb ; types CreatePrismaLikeDbOptions, PrismaBridgeConfig,
+  PrismaOperation, ModelBinding.
+- `@mostajs/orm-bridge/prisma-client` : createPrismaLikeDb (point d'entrée drop-in,
+  c'est l'import injecté par le codemod de @mostajs/orm-cli).
+
+## API — SIGNATURES
+- mostaExtension(config: PrismaBridgeConfig): any
+  → objet `$extends` ; seuls les modèles listés dans `config.models` sont interceptés,
+    les autres restent gérés par le moteur Prisma natif.
+- createPrismaLikeDb<T = any>(opts?: CreatePrismaLikeDbOptions): T
+  → proxy `db` exposant une propriété par entité (db.User, db.Member…) plus $connect,
+    $disconnect, $transaction. À créer une fois par process.
+- dispatchPrismaOp(...) — exécute une opération Prisma sur @mostajs/orm
+- mapPrismaWhere(where) / mapPrismaOrderBy(orderBy) — traduisent les clauses Prisma
+- getOrCreateDialect(...) : dialecte mis en cache (clé = signature de connexion)
+- disposeAllDialects(): ferme proprement tous les dialectes ouverts
+
+## TYPES CLÉS
+- ModelBinding : { dialect: DialectType, url?, connection?: ConnectionConfig,
+  collection?, schema?: EntitySchema }
+- BridgeConfig : { models: Record<string, ModelBinding>, fallback?: 'source'|'error',
+  onIntercept?(event: InterceptEvent) }
+- PrismaBridgeConfig extends BridgeConfig (fallback?: 'source'|'error')
+- InterceptEvent : { source, model, operation, dialect, duration?, error? }
+- CreatePrismaLikeDbOptions : { entities?: EntitySchema[], entitiesPath?, dialect?, uri?,
+  schemaStrategy?, caseInsensitive? (def true), resolveInclude? (def true), onIntercept? }
+  Défauts : entitiesPath = `.mostajs/generated/entities.json` ; dialect/uri lus depuis
+  process.env (DB_DIALECT / SGBD_URI, fallback sqlite ./data.sqlite) ; schemaStrategy = update.
+- PrismaOperation : findUnique | findUniqueOrThrow | findFirst | findFirstOrThrow | findMany
+  | count | create | createMany | update | updateMany | upsert | delete | deleteMany
+  | aggregate | groupBy
+
+## PATTERN
+```ts
+// Mode 1 — extension sélective de PrismaClient
+import { PrismaClient } from '@prisma/client';
+import { mostaExtension } from '@mostajs/orm-bridge/prisma';
+
+const prisma = new PrismaClient().$extends(mostaExtension({
+  models: {
+    AuditLog:  { dialect: 'mongodb', url: process.env.MONGO_URL },
+    Inventory: { dialect: 'oracle',  url: process.env.ORACLE_URL },
+  },
+}));
+// prisma.auditLog.findMany() -> @mostajs/orm sur MongoDB
+// prisma.user.findMany()     -> moteur Prisma natif (non mappé)
+
+// Mode 2 — drop-in total
+import { createPrismaLikeDb } from '@mostajs/orm-bridge/prisma-client';
+export const db = createPrismaLikeDb();
+```
+
+## DÉPEND DE
+- @mostajs/orm (peerDep — exécute réellement les requêtes)
+- @prisma/client (peerDep optionnel — requis pour le mode `mostaExtension`)
+
+## PIÈGES
+- v0.3.1 : `createPrismaLikeDb()` lit `DB_DIALECT`/`SGBD_URI`/`DB_SCHEMA_STRATEGY`
+  PARESSEUSEMENT (au 1er appel DB), pas à la construction. Important sous Next.js/bundler :
+  appeler au top-level avant dotenv pouvait verrouiller le fallback sqlite silencieusement.
+- Le dialecte est mis en cache sur la signature `dialect|uri|strategy` ; un changement d'env
+  (HMR, redémarrage) ferme l'ancien dialecte et en ouvre un neuf.
+- `fallback: 'source'` (défaut) : un modèle non mappé reste géré par l'ORM source ;
+  `'error'` lève une exception.
+- `createPrismaLikeDb` a besoin d'un `entities.json` (ou `entities` en option) —
+  généralement produit par @mostajs/orm-cli / @mostajs/orm-adapter.
+
+## RÉFÉRENCES
+- README.md · CHANGELOG.md · docs/DESIGN.md, docs/How2.md, docs/How2use.md
