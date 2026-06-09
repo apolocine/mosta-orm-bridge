@@ -9,9 +9,9 @@
 
 ## Watch the 3-line migration end-to-end (5 steps, ~2 min)
 
-[![asciicast](https://asciinema.org/a/vwZD8DvX0xVfwvLS.svg)](https://asciinema.org/a/vwZD8DvX0xVfwvLS)
+![demo](https://github.com/apolocine/mosta-orm-bridge/raw/master/assets/demo.gif)
 
-Live recording of a fresh Next.js + Prisma project being migrated to the bridge — `install → convert → replace db.ts → start → login`. Click to play in your browser.
+A fresh Next.js + Prisma project being migrated to the bridge — `install → convert → replace db.ts → start → login`. Interactive playback also available on [asciinema](https://asciinema.org/a/vwZD8DvX0xVfwvLS).
 
 ## The 3-line migration
 
